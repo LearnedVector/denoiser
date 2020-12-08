@@ -209,7 +209,7 @@ def fast_conv(conv, x):
         out = th.addmm(conv.bias.view(-1, 1),
                        conv.weight.view(chout, chin * kernel), x)
     else:
-        raise ValueError("not supported")
+        out = conv(x)
     return out.view(batch, chout, -1)
 
 
@@ -224,12 +224,15 @@ class DemucsStreamer:
         - dry (float): amount of dry (e.g. input) signal to keep. 0 is maximum
             noise removal, 1 just returns the input signal. Small values > 0
             allows to limit distortions.
+        - num_frames (int): number of frames to process at once. Higher values
+            will increase overall latency but improve the real time factor.
         - resample_lookahead (int): extra lookahead used for the resampling.
         - resample_buffer (int): size of the buffer of previous inputs/outputs
             kept for resampling.
     """
     def __init__(self, demucs,
                  dry=0,
+                 num_frames=1,
                  resample_lookahead=64,
                  resample_buffer=256):
         device = next(iter(demucs.parameters())).device
@@ -238,9 +241,11 @@ class DemucsStreamer:
         self.conv_state = None
         self.dry = dry
         self.resample_lookahead = resample_lookahead
+        resample_buffer = min(demucs.total_stride, resample_buffer)
         self.resample_buffer = resample_buffer
-        self.frame_length = demucs.valid_length(1)
+        self.frame_length = demucs.valid_length(1) + demucs.total_stride * (num_frames - 1)
         self.total_length = self.frame_length + self.resample_lookahead
+        self.stride = demucs.total_stride * num_frames
         self.resample_in = th.zeros(demucs.chin, resample_buffer, device=device)
         self.resample_out = th.zeros(demucs.chin, resample_buffer, device=device)
 
@@ -281,7 +286,7 @@ class DemucsStreamer:
         begin = time.time()
         demucs = self.demucs
         resample_buffer = self.resample_buffer
-        stride = demucs.total_stride
+        stride = self.stride
         resample = demucs.resample
 
         if wav.dim() != 2:
@@ -295,7 +300,7 @@ class DemucsStreamer:
         while self.pending.shape[1] >= self.total_length:
             self.frames += 1
             frame = self.pending[:, :self.total_length]
-            dry_signal = frame[:, :demucs.total_stride]
+            dry_signal = frame[:, :stride]
             if demucs.normalize:
                 mono = frame.mean(0)
                 variance = (mono**2).mean()
@@ -342,14 +347,13 @@ class DemucsStreamer:
         skips = []
         next_state = []
         first = self.conv_state is None
-        stride = demucs.total_stride * demucs.resample
+        stride = self.stride * demucs.resample
         x = frame[None]
         for idx, encode in enumerate(demucs.encoder):
             stride //= demucs.stride
             length = x.shape[2]
             if idx == demucs.depth - 1:
                 # This is sligthly faster for the last conv
-                assert length == demucs.kernel_size
                 x = fast_conv(encode[0], x)
                 x = encode[1](x)
                 x = fast_conv(encode[2], x)
@@ -412,19 +416,22 @@ def test():
         "denoiser.demucs",
         description="Benchmark the streaming Demucs implementation, "
                     "as well as checking the delta with the offline implementation.")
+    parser.add_argument("--depth", default=5, type=int)
     parser.add_argument("--resample", default=4, type=int)
     parser.add_argument("--hidden", default=48, type=int)
+    parser.add_argument("--sample_rate", default=16000, type=float)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("-t", "--num_threads", type=int)
+    parser.add_argument("-f", "--num_frames", type=int, default=1)
     args = parser.parse_args()
     if args.num_threads:
         th.set_num_threads(args.num_threads)
-    sr = 16_000
+    sr = args.sample_rate
     sr_ms = sr / 1000
-    demucs = Demucs(hidden=args.hidden, resample=args.resample).to(args.device)
-    x = th.randn(1, sr * 4).to(args.device)
+    demucs = Demucs(depth=args.depth, hidden=args.hidden, resample=args.resample).to(args.device)
+    x = th.randn(1, int(sr * 4)).to(args.device)
     out = demucs(x[None])[0]
-    streamer = DemucsStreamer(demucs)
+    streamer = DemucsStreamer(demucs, num_frames=args.num_frames)
     out_rt = []
     frame_size = streamer.total_length
     with th.no_grad():
@@ -434,11 +441,16 @@ def test():
             frame_size = streamer.demucs.total_stride
     out_rt.append(streamer.flush())
     out_rt = th.cat(out_rt, 1)
-    print(f"total lag: {streamer.total_length / sr_ms:.1f}ms, ", end='')
-    print(f"stride: {demucs.total_stride / sr_ms:.1f}ms, ", end='')
-    print(f"time per frame: {1000 * streamer.time_per_frame:.1f}ms, ", end='')
-    print(f"delta: {th.norm(out - out_rt) / th.norm(out):.2%}, ", end='')
-    print(f"RTF: {((1000 * streamer.time_per_frame) / (demucs.total_stride / sr_ms)):.1f}")
+    model_size = sum(p.numel() for p in demucs.parameters()) * 4 / 2**20
+    initial_lag = streamer.total_length / sr_ms
+    tpf = 1000 * streamer.time_per_frame
+    print(f"model size: {model_size:.1f}MB, ", end='')
+    print(f"delta batch/streaming: {th.norm(out - out_rt) / th.norm(out):.2%}")
+    print(f"initial lag: {initial_lag:.1f}ms, ", end='')
+    print(f"stride: {streamer.stride * args.num_frames / sr_ms:.1f}ms")
+    print(f"time per frame: {tpf:.1f}ms, ", end='')
+    print(f"RTF: {((1000 * streamer.time_per_frame) / (streamer.stride / sr_ms)):.2f}")
+    print(f"Total lag with computation: {initial_lag + tpf:.1f}ms")
 
 
 if __name__ == "__main__":

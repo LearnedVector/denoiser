@@ -14,8 +14,7 @@ import time
 import torch
 import torch.nn.functional as F
 
-from . import distrib
-from . import augment
+from . import augment, distrib, pretrained
 from .enhance import enhance
 from .evaluate import evaluate
 from .stft_loss import MultiResolutionSTFTLoss
@@ -115,6 +114,11 @@ class Solver(object):
             if keep_history:
                 self.history = package['history']
             self.best_state = package['best_state']
+        continue_pretrained = self.args.continue_pretrained
+        if continue_pretrained:
+            logger.info("Fine tuning from pre-trained model %s", continue_pretrained)
+            model = getattr(pretrained, self.args.continue_pretrained)()
+            self.model.load_state_dict(model.state_dict())
 
     def train(self):
         # Optimizing the model
@@ -157,7 +161,7 @@ class Solver(object):
 
             # evaluate and enhance samples every 'eval_every' argument number of epochs
             # also evaluate on last epoch
-            if (epoch + 1) % self.eval_every == 0 or epoch == self.epochs - 1:
+            if (epoch + 1) % self.eval_every == 0 or epoch == self.epochs - 1 and self.tt_loader:
                 # Evaluate on the testset
                 logger.info('-' * 70)
                 logger.info('Evaluating on the test set...')

@@ -1,5 +1,7 @@
 # Real Time Speech Enhancement in the Waveform Domain (Interspeech 2020)
 
+![tests badge](https://github.com/facebookresearch/denoiser/workflows/tests/badge.svg)
+
 We provide a [PyTorch][pytorch] implementation of the paper: [Real Time Speech Enhancement in the Waveform Domain][arxiv].
 In which, we present a causal speech enhancement model working on the raw waveform that runs in real-time on a laptop CPU.
 The proposed model is based on an encoder-decoder architecture with skip-connections. It is optimized on both time and frequency domains, using multiple loss functions.
@@ -56,6 +58,8 @@ python -m denoiser.live
 In your favorite video conference call application, just select "Soundflower (2ch)"
 as input to enjoy your denoised speech.
 
+Watch our live demo presentation in the following link: [Demo][demo].
+
 ### Other platforms
 
 At the moment, we do not provide official support for other OSes. However, if you
@@ -77,7 +81,12 @@ Audio can become crunchy if your computer is not fast enough to process audio in
 In that case, you will see an error message in your terminal warning you that `denoiser`
 is not processing audio fast enough. You can try exiting all non required applications.
 
-`denoiser` was tested on a Mac Book Pro with an 2GHz quadcore Intel i5.
+`denoiser` was tested on a Mac Book Pro with an 2GHz quadcore Intel i5 with DDR4 memory.
+You might experience issues with DDR3 memory. In that case you can trade overall latency for speed by processing multiple frames at once. To do so, run
+```
+python -m denoiser.live -f 2
+```
+You can increase to `-f 3` or more if needed, but each increase will add 16ms of extra latency.
 
 
 ### Denoising received speech
@@ -176,6 +185,15 @@ In the experiment folder you will find the `best.th` serialized model, the train
 and well as the log with the metrics `trainer.log`. All metrics are also extracted to the `history.json`
 file for easier parsing. Enhancements samples are stored in the `samples` folder (if `noisy_dir` or `noisy_json`
 is set in the dataset).
+
+#### Fine tuning
+
+You can fine-tune one of the 3 pre-trained models `dns48`, `dns64` and `master64`. To do so:
+```
+./train.py continue_pretrained=dns48
+./train.py continue_pretrained=dns64 demucs.hidden=64
+./train.py continue_pretrained=master64 demucs.hidden=64
+```
 
 ### 3. Evaluating
 
@@ -356,10 +374,11 @@ If you use the code in your paper, then please cite it as:
 ## License
 This repository is released under the CC-BY-NC 4.0. license as found in the [LICENSE](LICENSE) file.
 
-The file `denoiser/stft_loss.py` is adapted from the [kan-bayashi/ParallelWaveGAN][wavegan] repository. It is an unofficial implementation of the [ParallelWaveGAN][wavegan-paper] paper, released under the MIT License.
+The file `denoiser/stft_loss.py` was adapted from the [kan-bayashi/ParallelWaveGAN][wavegan] repository. It is an unofficial implementation of the [ParallelWaveGAN][wavegan-paper] paper, released under the MIT License.
+The file `scripts/matlab_eval.py` was adapted from the [santi-pdp/segan_pytorch][segan] repository. It is an unofficial implementation of the [SEGAN][segan-paper] paper, released under the MIT License.
 
 [arxiv]: https://arxiv.org/abs/2006.12847
-[web]: https://ai.honu.io/is2020/samples.html
+[web]: https://facebookresearch.github.io/denoiser/
 [pytorch]: https://pytorch.org/
 [valentini]: https://datashare.is.ed.ac.uk/handle/10283/2791
 [dns]: https://github.com/microsoft/DNS-Challenge
@@ -367,6 +386,9 @@ The file `denoiser/stft_loss.py` is adapted from the [kan-bayashi/ParallelWaveGA
 [hydra-web]: https://hydra.cc/
 [soundflower]: https://github.com/mattingalls/Soundflower
 [wavegan]: https://github.com/kan-bayashi/ParallelWaveGAN
+[segan]: https://github.com/santi-pdp/segan_pytorch
 [wavegan-paper]: https://arxiv.org/pdf/1910.11480.pdf
+[segan-paper]: https://arxiv.org/pdf/1703.09452.pdf
 [demucs-code]: https://github.com/facebookresearch/demucs
 [demucs-ppr]: https://hal.archives-ouvertes.fr/hal-02379796/document
+[demo]: https://www.youtube.com/watch?v=77cm_MVtLfk
